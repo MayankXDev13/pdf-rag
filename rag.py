@@ -1,4 +1,4 @@
-import google.generativeai as genai
+import google.genai as genai
 from config import GOOGLE_API_KEY, LLM_MODEL
 from retrieval import retrieve, format_context
 
