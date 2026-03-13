@@ -8,5 +8,5 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 
 INDEX_NAME = "pdf-rag"
 
-EMBED_MODEL = "models/text-embedding-004"
+EMBED_MODEL = "gemini-embedding-2-preview"
 LLM_MODEL = "gemini-1.5-flash"
