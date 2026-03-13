@@ -1,46 +1,50 @@
-from google import genai
-from config import GOOGLE_API_KEY, LLM_MODEL
-from retrieval import retrieve, format_context
+from typing import Optional
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.prompts import ChatPromptTemplate
+from retrieval import get_retriever
+from config import LLM_MODEL, GOOGLE_API_KEY
 
-client = genai.Client(api_key=GOOGLE_API_KEY)
+llm = ChatGoogleGenerativeAI(
+    model=LLM_MODEL,
+    google_api_key=GOOGLE_API_KEY,
+    temperature=0.7,
+)
+
+system_prompt = """You are a helpful assistant. Use the context provided to answer the user's question.
+If you cannot find the answer in the context, say so. Be concise and accurate."""
+
+prompt = ChatPromptTemplate.from_messages(
+    [("system", system_prompt), ("human", "{input}")]
+)
 
 
-def ask(
-    question: str, k: int = 3, filename: str | None = None, show_sources: bool = True
-) -> dict:
-    matches = retrieve(question, k=k, filename=filename)
+def ask(question: str, k: int = 3, filename: Optional[str] = None) -> dict:
+    retriever = get_retriever(k=k, filename=filename)
 
-    if not matches:
-        return {"answer": "No relevant context found.", "sources": []}
+    combine_docs_chain = create_stuff_documents_chain(llm=llm, prompt=prompt)
+    retrieval_chain = create_retrieval_chain(
+        retriever=retriever, combine_docs_chain=combine_docs_chain
+    )
 
-    context_text = format_context(matches)
-
-    prompt = f"""Answer the question using the context below.
-
-Context:
-{context_text}
-
-Question:
-{question}
-
-Answer:
-"""
-
-    response = client.models.generate_content(model=LLM_MODEL, contents=prompt)
+    result = retrieval_chain.invoke({"input": question})
 
     sources = []
-    for match in matches:
+    for doc in result.get("context", []):
         sources.append(
             {
-                "filename": match["filename"],
-                "page": match["page"],
-                "score": match["score"],
+                "filename": doc.metadata.get("filename"),
+                "page": doc.metadata.get("page", 1),
                 "text": (
-                    match["text"][:200] + "..."
-                    if len(match["text"]) > 200
-                    else match["text"]
+                    doc.page_content[:200] + "..."
+                    if len(doc.page_content) > 200
+                    else doc.page_content
                 ),
             }
         )
 
-    return {"answer": response.text, "sources": sources}
+    return {
+        "answer": result["answer"],
+        "sources": sources,
+    }

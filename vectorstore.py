@@ -1,7 +1,10 @@
 import hashlib
+from typing import Optional
 from pinecone import Pinecone, ServerlessSpec
+from langchain_pinecone import PineconeVectorStore
+from langchain.schema import Document
 from config import PINECONE_API_KEY, INDEX_NAME
-from embeddings import get_embedding
+from embeddings import embeddings
 
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
@@ -16,8 +19,11 @@ def create_index():
         )
 
 
-def get_index():
-    return pc.Index(INDEX_NAME)
+def get_vectorstore() -> PineconeVectorStore:
+    create_index()
+    return PineconeVectorStore(
+        index=pc.Index(INDEX_NAME), embedding=embeddings, text_key="text"
+    )
 
 
 def compute_file_id(filename: str, file_hash: str) -> str:
@@ -25,7 +31,7 @@ def compute_file_id(filename: str, file_hash: str) -> str:
 
 
 def file_exists_in_index(filename: str, file_hash: str) -> bool:
-    index = get_index()
+    index = pc.Index(INDEX_NAME)
     file_id = compute_file_id(filename, file_hash)
 
     try:
@@ -35,52 +41,42 @@ def file_exists_in_index(filename: str, file_hash: str) -> bool:
         return False
 
 
-def upsert_chunks(
-    chunks: list[dict], filename: str, file_hash: str, batch_size: int = 100
-):
-    index = get_index()
-    file_id = compute_file_id(filename, file_hash)
+def add_documents(
+    documents: list[Document],
+    filename: str,
+    file_hash: str,
+    batch_size: int = 100,
+) -> bool:
+    vectorstore = get_vectorstore()
 
-    vectors = []
-    for chunk in chunks:
-        embedding = get_embedding(chunk["text"])
-        vectors.append(
-            {
-                "id": f"{file_id}_chunk_{chunk['chunk_index']}",
-                "values": embedding,
-                "metadata": {
-                    "text": chunk["text"],
-                    "page": chunk["page"],
-                    "chunk_index": chunk["chunk_index"],
-                    "filename": filename,
-                    "file_hash": file_hash,
-                    "file_id": file_id,
-                },
-            }
-        )
+    for i, doc in enumerate(documents):
+        doc.metadata["filename"] = filename
+        doc.metadata["file_hash"] = file_hash
+        doc.metadata["file_id"] = compute_file_id(filename, file_hash)
+        doc.metadata["chunk_index"] = i
 
-        if len(vectors) >= batch_size:
-            index.upsert(vectors=vectors)
-            vectors = []
-
-    if vectors:
-        index.upsert(vectors=vectors)
+    try:
+        vectorstore.add_documents(documents=documents, batch_size=batch_size)
+        return True
+    except Exception as e:
+        print(f"Error adding documents: {e}")
+        return False
 
 
-def delete_file(filename: str, file_hash: str):
-    index = get_index()
+def delete_file(filename: str, file_hash: str) -> bool:
+    index = pc.Index(INDEX_NAME)
     file_id = compute_file_id(filename, file_hash)
 
     try:
-        delete_response = index.delete(filter={"file_id": {"$eq": file_id}})
+        index.delete(filter={"file_id": {"$eq": file_id}})
         return True
     except Exception as e:
         print(f"Error deleting file: {e}")
         return False
 
 
-def list_indexed_files():
-    index = get_index()
+def list_indexed_files() -> list[str]:
+    index = pc.Index(INDEX_NAME)
     stats = index.describe_index_stats()
 
     filenames = set()

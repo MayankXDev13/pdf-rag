@@ -1,53 +1,32 @@
 import hashlib
-from pathlib import Path
-from pypdf import PdfReader
+from io import BytesIO
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 
 
-def load_pdf(path: str) -> tuple[list[str], int]:
-    reader = PdfReader(path)
-    pages = []
-
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            pages.append(text)
-
-    return pages, len(reader.pages)
+def load_pdf(file_data: bytes) -> list[Document]:
+    pdf_stream = BytesIO(file_data)
+    loader = PyPDFLoader(file=pdf_stream)
+    return loader.load()
 
 
-def get_file_hash(path: str) -> str:
-    with open(path, "rb") as f:
-        return hashlib.md5(f.read()).hexdigest()
+def get_file_hash(data: bytes) -> str:
+    return hashlib.md5(data).hexdigest()
 
 
 def get_filename(path: str) -> str:
-    return Path(path).name
+    import os
+
+    return os.path.basename(path)
 
 
-def chunk_text(
-    pages: list[str], chunk_size: int = 800, overlap: int = 100
-) -> list[dict]:
-    chunks = []
-    global_chunk_id = 0
-
-    for page_num, page_text in enumerate(pages, start=1):
-        start = 0
-
-        while start < len(page_text):
-            end = start + chunk_size
-            chunk_text = page_text[start:end]
-
-            if chunk_text.strip():
-                chunks.append(
-                    {
-                        "id": str(global_chunk_id),
-                        "text": chunk_text,
-                        "page": page_num,
-                        "chunk_index": len(chunks),
-                    }
-                )
-                global_chunk_id += 1
-
-            start += chunk_size - overlap
-
-    return chunks
+def chunk_documents(
+    documents: list[Document], chunk_size: int = 800, overlap: int = 100
+) -> list[Document]:
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        add_start_index=True,
+    )
+    return text_splitter.split_documents(documents)
