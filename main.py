@@ -35,6 +35,7 @@ async def ingest(
     overlap: int = Form(100),
     rebuild: bool = Form(False),
 ):
+
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 

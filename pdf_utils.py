@@ -1,32 +1,62 @@
 import hashlib
-from io import BytesIO
+import os
+import tempfile
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
 
 def load_pdf(file_data: bytes) -> list[Document]:
-    pdf_stream = BytesIO(file_data)
-    loader = PyPDFLoader(file=pdf_stream)
-    return loader.load()
+    """
+    Load a PDF from uploaded bytes and return LangChain Documents.
+    """
+
+    # Create temporary PDF file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(file_data)
+        tmp_path = tmp.name
+
+    try:
+        loader = PyPDFLoader(tmp_path)
+        documents = loader.load()
+    finally:
+        # Remove temp file after loading
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    return documents
 
 
 def get_file_hash(data: bytes) -> str:
+    """
+    Generate a unique hash for the uploaded file.
+    Useful for caching or deduplication.
+    """
     return hashlib.md5(data).hexdigest()
 
 
 def get_filename(path: str) -> str:
-    import os
-
+    """
+    Extract filename from file path.
+    """
     return os.path.basename(path)
 
 
 def chunk_documents(
-    documents: list[Document], chunk_size: int = 800, overlap: int = 100
+    documents: list[Document],
+    chunk_size: int = 800,
+    overlap: int = 100
 ) -> list[Document]:
+    """
+    Split documents into smaller chunks for embeddings.
+    """
+
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=overlap,
         add_start_index=True,
     )
-    return text_splitter.split_documents(documents)
+
+    chunks = text_splitter.split_documents(documents)
+
+    return chunks
