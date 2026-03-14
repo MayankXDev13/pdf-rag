@@ -1,133 +1,96 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
-from fastapi.responses import JSONResponse
-from typing import Optional
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from s3_utils import upload_file, delete_from_s3, file_exists, download_file
+from pdf_utils import load_pdf, chunk_documents
+from pinecone_utils import add_documents
 from pydantic import BaseModel
-from pdf_utils import load_pdf, chunk_documents, get_file_hash
-from vectorstore import (
-    add_documents,
-    delete_file as delete_from_vectorstore,
-    list_indexed_files,
-    file_exists_in_index,
-)
-from s3_utils import (
-    upload_file,
-    download_file,
-    delete_file as delete_from_s3,
-    file_exists,
-    list_files as list_s3_files,
-)
-from logger import logger
-from rag import ask as rag_ask
+from fastapi import HTTPException
+from chat import chat
 
-app = FastAPI(
-    title="PDF RAG API", description="LangChain-powered PDF RAG system with S3 storage"
-)
-
-
-class QueryRequest(BaseModel):
-    question: str
-    k: Optional[int] = 3
-    filename: Optional[str] = None
+app = FastAPI()
 
 
 @app.post("/ingest")
-async def ingest(
-    file: UploadFile = File(...),
-    chunk_size: int = Form(800),
-    overlap: int = Form(100),
-    rebuild: bool = Form(False),
-):
+async def ingest(file: UploadFile = File(...)):
 
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    try:
 
-    filename = file.filename or "uploaded.pdf"
+        # Validate file type
+        if file.content_type != "application/pdf":
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    if not rebuild and file_exists(filename):
-        # file already present in S3; still check vectorstore by hash after reading
-        logger.info("File %s already exists in S3", filename)
+        file_name = file.filename
 
-    file_data = await file.read()
-    file_hash = get_file_hash(file_data)
+        # Check if file already exists
+        if file_exists(file_name):
+            raise HTTPException(status_code=409, detail="File already exists")
 
-    if not rebuild and file_exists_in_index(filename, file_hash):
-        raise HTTPException(
-            status_code=409,
-            detail=f"File '{filename}' already indexed. Use rebuild=true to re-index.",
-        )
+        # Read file
+        file_data = await file.read()
 
-    if rebuild:
-        # delete by specific file_id
-        delete_from_vectorstore(filename, file_hash)
+        # Upload to S3
+        await upload_file(file_data, file_name)
 
-    upload_file(file_data, filename)
+        # Download from S3
+        downloaded_file_data = await download_file(file_name)
 
-    documents = load_pdf(file_data)
-    chunks = chunk_documents(documents, chunk_size=chunk_size, overlap=overlap)
+        # Load PDF
+        documents = await load_pdf(downloaded_file_data)
 
-    success = add_documents(chunks, filename, file_hash)
+        # Chunk documents
+        chunks = await chunk_documents(documents)
 
-    if not success:
-        raise HTTPException(
-            status_code=500, detail="Failed to add documents to vector store"
-        )
+        # Store embeddings in Pinecone
+        await add_documents(chunks)
 
-    return {
-        "message": "File indexed successfully",
-        "filename": filename,
-        "pages": len(documents),
-        "chunks": len(chunks),
-    }
+        return {
+            "message": "File successfully ingested",
+            "file_name": file_name,
+            "chunks_created": len(chunks),
+        }
+
+    except HTTPException as e:
+        raise e
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class QueryRequest(BaseModel):
+    question: str  # User query
+    k: Optional[int] = 3  # Number of results to retrieve from vector DB
+    filename: Optional[str] = (
+        None  # Optional filter to search inside a specific document
+    )
+
+
+
 
 
 @app.post("/query")
-async def query(request: QueryRequest):
-    try:
-        result = rag_ask(
-            question=request.question,
-            k=request.k or 3,
-            filename=request.filename,
+def query(request: QueryRequest):
+
+    if not request.question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty"
         )
-        return result
+
+    try:
+
+        result = chat(
+            question=request.question,
+            k=request.k,
+            filename=request.filename
+        )
+
+        return {
+            "question": request.question,
+            "answer": result["answer"],
+            "sources": result["sources"]
+        }
+
     except Exception as e:
-        logger.exception("Error during query: %s", e)
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@app.get("/files")
-async def list_files():
-    s3_files = list_s3_files()
-    pinecone_files = list_indexed_files()
-
-    all_files = list(set(s3_files + pinecone_files))
-
-    return {"files": all_files}
-
-
-@app.get("/health")
-async def health():
-    return JSONResponse({"status": "ok"})
-
-
-@app.delete("/files/{filename}")
-async def delete_file(filename: str):
-    from config import INDEX_NAME
-
-    # Attempt to delete from S3 and vectorstore. If we don't know the file hash,
-    # delete by filename metadata in the vectorstore.
-    try:
-        s3_deleted = delete_from_s3(filename)
-    except Exception:
-        logger.exception("Error deleting file from S3: %s", filename)
-        s3_deleted = False
-
-    try:
-        vector_deleted = delete_from_vectorstore(filename)
-    except Exception:
-        logger.exception("Error deleting file from vectorstore: %s", filename)
-        vector_deleted = False
-
-    if not s3_deleted and not vector_deleted:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    return {"message": f"File '{filename}' deleted from S3 and Pinecone"}
+        raise HTTPException(
+            status_code=500,
+            detail=f"Query failed: {str(e)}"
+        )

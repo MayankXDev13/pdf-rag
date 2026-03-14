@@ -4,12 +4,11 @@ import tempfile
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from logger import logger
 
 
 def load_pdf(file_data: bytes) -> list[Document]:
     """
-    Load a PDF from uploaded bytes and return LangChain Documents.
+    Load a PDF from uploaded bytes and return docs.
     """
 
     # Create temporary PDF file
@@ -26,39 +25,39 @@ def load_pdf(file_data: bytes) -> list[Document]:
             try:
                 os.remove(tmp_path)
             except Exception:
-                logger.exception("Failed to remove temp file: %s", tmp_path)
+                pass
 
     return documents
 
 
-def get_file_hash(data: bytes) -> str:
-    """
-    Generate a unique hash for the uploaded file.
-    Useful for caching or deduplication.
-    """
-    return hashlib.md5(data).hexdigest()
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
-def get_filename(path: str) -> str:
-    """
-    Extract filename from file path.
-    """
-    return os.path.basename(path)
+async def chunk_documents(documents, filename):
 
-
-def chunk_documents(
-    documents: list[Document], chunk_size: int = 800, overlap: int = 100
-) -> list[Document]:
-    """
-    Split documents into smaller chunks for embeddings.
-    """
-
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=overlap,
-        add_start_index=True,
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
     )
 
-    chunks = text_splitter.split_documents(documents)
+    chunks = []
+    chunk_id = 0
+
+    for doc in documents:
+
+        splits = splitter.split_text(doc.page_content)
+
+        for split in splits:
+
+            chunks.append({
+                "text": split,
+                "metadata": {
+                    "filename": filename,
+                    "page": doc.metadata.get("page", 1),
+                    "chunk_id": f"{filename}_{chunk_id}"
+                }
+            })
+
+            chunk_id += 1
 
     return chunks

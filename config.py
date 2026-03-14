@@ -4,7 +4,7 @@ from typing import List
 
 load_dotenv()
 
-INDEX_NAME = "pdf-rag"
+PINECONE_INDEX_NAME = "pdf-embeddings"
 INDEX_PREFIX = "pdf-rag"
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "models/gemini-embedding-001")
