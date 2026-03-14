@@ -79,3 +79,21 @@ def file_exists(filename: str) -> bool:
         return True
     except ClientError:
         return False
+
+
+def list_files() -> list[str]:
+    """List all files in the S3 bucket with the index prefix"""
+    s3_client = get_s3_client()
+
+    try:
+        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=INDEX_PREFIX + "/")
+        files = []
+        if "Contents" in response:
+            for obj in response["Contents"]:
+                key = obj["Key"]
+                filename = key.replace(INDEX_PREFIX + "/", "", 1)
+                files.append(filename)
+        return files
+    except ClientError as e:
+        print(f"Error listing files from S3: {e}")
+        return []

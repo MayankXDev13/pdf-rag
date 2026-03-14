@@ -1,46 +1,55 @@
+import logging
+from typing import Optional
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from s3_utils import upload_file, delete_from_s3, file_exists, download_file
-from pdf_utils import load_pdf, chunk_documents
-from pinecone_utils import add_documents
+from utils.s3_utils import upload_file, delete_from_s3, file_exists, download_file, list_files
+from utils.pdf_utils import load_pdf, chunk_documents
+from utils.pinecone_utils import add_documents, delete_by_source, list_indexed_files
 from pydantic import BaseModel
-from fastapi import HTTPException
 from chat import chat
 
 app = FastAPI()
 
 
 @app.post("/ingest")
-async def ingest(file: UploadFile = File(...)):
-
+async def ingest(
+    file: UploadFile = File(...),
+    chunk_size: int = 800,
+    overlap: int = 100,
+    rebuild: bool = False,
+):
     try:
 
-        # Validate file type
         if file.content_type != "application/pdf":
             raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
         file_name = file.filename
+        if not file_name:
+            raise HTTPException(status_code=400, detail="Filename cannot be empty")
 
-        # Check if file already exists
-        if file_exists(file_name):
-            raise HTTPException(status_code=409, detail="File already exists")
+        logger.info(f"Processing ingest request for file: {file_name}")
 
-        # Read file
+        if file_exists(file_name) and not rebuild:
+            raise HTTPException(status_code=409, detail="File already exists. Use rebuild=true to re-index.")
+
         file_data = await file.read()
 
-        # Upload to S3
-        await upload_file(file_data, file_name)
+        upload_file(file_data, file_name)
+        logger.info(f"Uploaded file to S3: {file_name}")
 
-        # Download from S3
-        downloaded_file_data = await download_file(file_name)
+        downloaded_file_data = download_file(file_name)
 
-        # Load PDF
-        documents = await load_pdf(downloaded_file_data)
+        documents = load_pdf(downloaded_file_data)
+        logger.info(f"Loaded PDF, got {len(documents)} pages")
 
-        # Chunk documents
-        chunks = await chunk_documents(documents)
+        chunks = chunk_documents(documents, file_name, chunk_size, overlap)
+        logger.info(f"Created {len(chunks)} chunks")
 
-        # Store embeddings in Pinecone
-        await add_documents(chunks)
+        add_documents(chunks)
+        logger.info(f"Indexed {len(chunks)} chunks to Pinecone")
 
         return {
             "message": "File successfully ingested",
@@ -52,6 +61,7 @@ async def ingest(file: UploadFile = File(...)):
         raise e
 
     except Exception as e:
+        logger.error(f"Error during ingest: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -70,8 +80,9 @@ def query(request: QueryRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
     try:
+        logger.info(f"Processing query: {request.question[:50]}...")
 
-        result = chat(question=request.question, k=request.k, filename=request.filename)
+        result = chat(question=request.question, k=request.k or 3, filename=request.filename)
 
         return {
             "question": request.question,
@@ -80,4 +91,53 @@ def query(request: QueryRequest):
         }
 
     except Exception as e:
+        logger.error(f"Error during query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
+@app.get("/files")
+def list_all_files():
+    """List all files in S3 and Pinecone"""
+    try:
+        s3_files = list_files()
+        indexed_files = list_indexed_files()
+        
+        return {
+            "s3_files": s3_files,
+            "indexed_files": indexed_files,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy"}
+
+
+@app.delete("/files/{filename}")
+def delete_file(filename: str):
+    """Delete a file from both S3 and Pinecone"""
+    try:
+        s3_deleted = delete_from_s3(filename)
+        
+        try:
+            delete_by_source(filename)
+            pinecone_deleted = True
+        except Exception as e:
+            pinecone_deleted = False
+            print(f"Warning: Failed to delete from Pinecone: {e}")
+        
+        if not s3_deleted and not pinecone_deleted:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        return {
+            "message": "File deleted successfully",
+            "s3_deleted": s3_deleted,
+            "pinecone_deleted": pinecone_deleted,
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")

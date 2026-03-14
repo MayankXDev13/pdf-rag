@@ -31,7 +31,6 @@ prompt = ChatPromptTemplate.from_messages(
 
 
 def chat(question: str, k: int = 3, filename: Optional[str] = None) -> dict:
-    try:
 
         # Create retriever
         retriever = get_retriever(k=k, filename=filename)
@@ -67,13 +66,4 @@ def chat(question: str, k: int = 3, filename: Optional[str] = None) -> dict:
             "question": question,
             "answer": result.get("answer", "No answer generated."),
             "sources": sources,
-        }
-
-    except Exception as e:
-
-        return {
-            "question": question,
-            "answer": "An error occurred while processing the query.",
-            "sources": [],
-            "error": str(e),
         }

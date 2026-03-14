@@ -1,7 +1,7 @@
 from typing import Optional
 from langchain_pinecone import PineconeVectorStore
 from embeddings import embeddings
-from config import INDEX_NAME
+from config import PINECONE_INDEX_NAME
 
 
 def get_retriever(k: int = 3, filename: Optional[str] = None):
@@ -11,7 +11,7 @@ def get_retriever(k: int = 3, filename: Optional[str] = None):
         k = 3
 
     vectorstore = PineconeVectorStore(
-        index_name=INDEX_NAME,
+        index_name=PINECONE_INDEX_NAME,
         embedding=embeddings,
         text_key="text",
     )

@@ -11,7 +11,6 @@ def load_pdf(file_data: bytes) -> list[Document]:
     Load a PDF from uploaded bytes and return docs.
     """
 
-    # Create temporary PDF file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file_data)
         tmp_path = tmp.name
@@ -20,7 +19,6 @@ def load_pdf(file_data: bytes) -> list[Document]:
         loader = PyPDFLoader(tmp_path)
         documents = loader.load()
     finally:
-        # Remove temp file after loading
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -30,12 +28,9 @@ def load_pdf(file_data: bytes) -> list[Document]:
     return documents
 
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+def chunk_documents(documents, filename, chunk_size=800, overlap=100):
 
-
-async def chunk_documents(documents, filename):
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
 
     chunks = []
     chunk_id = 0
