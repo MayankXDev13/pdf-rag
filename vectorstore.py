@@ -53,7 +53,9 @@ def file_exists_in_index(filename: str, file_hash: str) -> bool:
 
     try:
         fetch_response = index.fetch(ids=[file_id])
-        return file_id in getattr(fetch_response, "vectors", fetch_response.get("vectors", {}))
+        return file_id in getattr(
+            fetch_response, "vectors", fetch_response.get("vectors", {})
+        )
     except Exception:
         logger.exception("Error checking if file exists in index: %s", file_id)
         return False

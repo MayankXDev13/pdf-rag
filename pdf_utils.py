@@ -47,9 +47,7 @@ def get_filename(path: str) -> str:
 
 
 def chunk_documents(
-    documents: list[Document],
-    chunk_size: int = 800,
-    overlap: int = 100
+    documents: list[Document], chunk_size: int = 800, overlap: int = 100
 ) -> list[Document]:
     """
     Split documents into smaller chunks for embeddings.
